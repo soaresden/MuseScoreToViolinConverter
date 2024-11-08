@@ -1,0 +1,23 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.10.35027.167
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "MuseScoreToViolinConverter", "MuseScoreToViolinConverter\MuseScoreToViolinConverter.pyproj", "{E0C6B0ED-E43F-4BCD-80CF-6F2DEA576CCD}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{E0C6B0ED-E43F-4BCD-80CF-6F2DEA576CCD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{E0C6B0ED-E43F-4BCD-80CF-6F2DEA576CCD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {5C47A386-1A1C-4DDE-8729-B6F994B2748B}
+	EndGlobalSection
+EndGlobal
