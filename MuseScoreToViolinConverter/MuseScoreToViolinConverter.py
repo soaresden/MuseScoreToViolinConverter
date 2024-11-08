@@ -593,7 +593,7 @@ legend_colors = ['white', 'gray', 'brown', 'purple', 'pink', 'turquoise', 'blue'
 for i, color in enumerate(legend_colors, start=1):
     legend_label = tk.Label(root, text=f"[{i}]", bg=color, fg='black' if color == 'white' else ('white' if color != 'turquoise' else 'black'))
     legend_label.place(x=945 + (i * 30), y=20)
-    
+   
 
 # Open in MuseScore
 musescore_button = tk.Button(root, text="Open in MuseScore", command=open_in_musescore)
