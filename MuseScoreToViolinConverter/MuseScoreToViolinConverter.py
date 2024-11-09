@@ -14,7 +14,6 @@ import re
 from bs4 import BeautifulSoup
 import pyperclip
 
-
 current_file_path = None
 
 # Function to load a MusicXML, MSCX, or MSCZ file
@@ -29,75 +28,75 @@ def load_musicxml():
         base_name = os.path.splitext(os.path.basename(file_path))[0]
         html_path = os.path.join(directory, f"{base_name}_fingering.html")
         
-        # Process the original file
-        if file_path.endswith('.mscz'):
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                extracted_files = [file for file in zip_ref.namelist() if not file.endswith(('.dat', '.tar'))]
-                mscx_files = [f for f in extracted_files if f.endswith('.mscx')]
-                if mscx_files:
-                    zip_ref.extract(mscx_files[0], '/mnt/data')
-                    mscx_file_path = os.path.join('/mnt/data', mscx_files[0])
-                    score = parse_mscx(mscx_file_path)
-                    if score:
-                        display_measures(score, is_mscx=True)
-                    else:
-                        print("No measures found in the MSCX file.")
-        elif file_path.endswith('.mscx'):
-            score = parse_mscx(file_path)
-            if score:
-                display_measures(score, is_mscx=True)
-            else:
-                print("No measures found in the MSCX file.")
-        else:
-            score = converter.parse(file_path)
-            display_measures(score, is_mscx=False)
-
-        file_label.config(text=f"File opened: {os.path.basename(file_path)}")
-        
-        # Convert notes to violin fingering
-        convert_to_violin()
-        
-        # Load existing HTML file into textbox3 if it exists
-        if os.path.exists(html_path):
-            with open(html_path, 'r', encoding='utf-8') as f:
-                content = f.read()
+        try:
+            # Process the file based on its extension
+            if file_path.endswith('.mscz'):
+                # Create a temporary directory for extraction
+                import tempfile
+                temp_dir = tempfile.mkdtemp()
                 
-                # Utiliser BeautifulSoup pour extraire le contenu du corps tout en conservant les balises
-                soup = BeautifulSoup(content, 'html.parser')
-                body_content = soup.find('body')
-                
-                if body_content:
-                    # Effacer le contenu actuel de editable_notes_display
-                    editable_notes_display.delete('1.0', tk.END)
+                try:
+                    with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                        # List all files in the archive
+                        mscx_files = [f for f in zip_ref.namelist() if f.endswith('.mscx')]
+                        
+                        if not mscx_files:
+                            raise Exception("No .mscx file found in the .mscz archive")
+                        
+                        # Extract the first .mscx file found
+                        mscx_path = os.path.join(temp_dir, mscx_files[0])
+                        zip_ref.extract(mscx_files[0], temp_dir)
+                        
+                        # Parse the extracted .mscx file
+                        score = parse_mscx(mscx_path)
+                        if score:
+                            display_measures(score, is_mscx=True)
+                        else:
+                            messagebox.showerror("Error", "No measures found in the MSCX file")
+                finally:
+                    # Clean up temporary directory
+                    import shutil
+                    shutil.rmtree(temp_dir)
                     
-                    # Ajouter le contenu avec formatage
-                    for line in body_content.find_all('div', class_='measure'):
-                        for element in line:
-                            if element.name == 'span':
-                                # Récupérer le texte et les classes de style
-                                text = element.get_text()
-                                classes = element.get('class', [])
-                                tag = ' '.join(classes)
-                                
-                                # Insérer le texte avec le tag de style
-                                editable_notes_display.insert(tk.END, text, tag)
-                            else:
-                                # Insérer le texte sans style
-                                editable_notes_display.insert(tk.END, element)
-                        # Ajouter un saut de ligne pour chaque mesure
-                        editable_notes_display.insert(tk.END, '\n')
-        else:
-            # Si le fichier HTML n'existe pas, charger le fichier normalement
-            score = converter.parse(file_path)
-            display_measures(score, is_mscx=False)
-        
-        # Mettre à jour le label avec le nom du fichier ouvert
-        file_label.config(text=f"File opened: {os.path.basename(file_path)}")
-    else:
-        # Copy content from textbox2 to textbox3 with formatting
-        copy_text_with_formatting(converted_notes_display, editable_notes_display)
-        # Save initial HTML file
-        save_as_html(current_file_path)
+            elif file_path.endswith('.mscx'):
+                score = parse_mscx(file_path)
+                if score:
+                    display_measures(score, is_mscx=True)
+                else:
+                    messagebox.showerror("Error", "No measures found in the MSCX file")
+            else:
+                # Handle MusicXML files
+                score = converter.parse(file_path)
+                display_measures(score, is_mscx=False)
+
+            file_label.config(text=f"File opened: {os.path.basename(file_path)}")
+            
+            # Convert notes to violin fingering
+            convert_to_violin()
+            
+            # Load existing HTML file if it exists
+            if os.path.exists(html_path):
+                with open(html_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    soup = BeautifulSoup(content, 'html.parser')
+                    body_content = soup.find('body')
+                    
+                    if body_content:
+                        editable_notes_display.delete('1.0', tk.END)
+                        for line in body_content.find_all('div', class_='measure'):
+                            for element in line:
+                                if element.name == 'span':
+                                    text = element.get_text()
+                                    classes = element.get('class', [])
+                                    tag = ' '.join(classes)
+                                    editable_notes_display.insert(tk.END, text, tag)
+                                else:
+                                    editable_notes_display.insert(tk.END, element)
+                            editable_notes_display.insert(tk.END, '\n')
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Error loading file: {str(e)}")
+            print(f"Error details: {e}")
  
 # Function to parse an MSCX file and extract musical information
 def parse_mscx(file_path):
@@ -133,43 +132,64 @@ def highlight_selection(event=None):
         widget = root.focus_get()
         if not isinstance(widget, ScrolledText):
             return
-
         # Remove previous highlights from all textboxes
         for text_widget in [original_notes_display, converted_notes_display, editable_notes_display]:
             text_widget.tag_remove('highlight', '1.0', tk.END)
-
         try:
             selection_start = widget.index(tk.SEL_FIRST)
             selection_end = widget.index(tk.SEL_LAST)
         except tk.TclError:
             return
-
-        # Get measure number and selected text
+        # Get measure number and line content
         start_line = int(selection_start.split('.')[0])
-        start_col = int(selection_start.split('.')[1])
-        end_col = int(selection_end.split('.')[1])
-        
-        # Get the full line content
         line_content = widget.get(f"{start_line}.0", f"{start_line}.end")
-        
-        # Count non-space characters up to the selection
-        non_space_chars_before = len([c for c in line_content[:start_col] if c != ' '])
-        non_space_chars_to_end = len([c for c in line_content[:end_col] if c != ' '])
-        
-        # Format selection display
-        if non_space_chars_before == non_space_chars_to_end - 1:
-            selection_display = f"M{start_line:03d}:[{non_space_chars_before}]"
+        # Find the position of ":" in the line
+        colon_pos = line_content.find(':')
+        if colon_pos == -1:
+            return
+        # Get the words after the colon
+        words_part = line_content[colon_pos + 1:].strip()
+        words = [word for word in words_part.split() if word]  # Split by whitespace and remove empty strings
+        # Get selected text and its position relative to the words
+        selected_text = widget.get(selection_start, selection_end).strip()
+        text_before_selection = line_content[:int(selection_start.split('.')[1])]
+        text_after_colon = text_before_selection[colon_pos + 1:].strip()
+        words_before = len(text_after_colon.split())
+        # Find which words are selected (adding 1 to start from 1 instead of 0)
+        selected_words = selected_text.split()
+        start_word_index = words_before + 1  # Add 1 here
+        end_word_index = start_word_index + len(selected_words) - 1
+        # Create selection display format
+        if start_word_index == end_word_index:
+            selection_display = f"M{start_line:03d}:[{start_word_index}]"
         else:
-            selection_display = f"M{start_line:03d}:[{non_space_chars_before}:{non_space_chars_to_end-1}]"
-        
-        # Pour chaque textbox
-        for text_widget in [original_notes_display, converted_notes_display, editable_notes_display]:
-            text_widget.tag_add('highlight', selection_start, selection_end)
-            text_widget.tag_configure('highlight', background='yellow')
-
+            selection_display = f"M{start_line:03d}:[{start_word_index};{end_word_index}]"
         # Update selection label
         selection_label.config(text=selection_display)
-
+        # Highlight corresponding words in all textboxes
+        for text_widget in [original_notes_display, converted_notes_display, editable_notes_display]:
+            line_content = text_widget.get(f"{start_line}.0", f"{start_line}.end")
+            colon_pos = line_content.find(':')
+            if colon_pos == -1:
+                continue
+            # Split words after colon
+            words = line_content[colon_pos + 1:].strip().split()
+            
+            # Find the positions of the selected words
+            current_pos = colon_pos + 1
+            word_count = 0  # Start at 0, will be incremented to 1 before first comparison
+            
+            for word in words:
+                current_pos = line_content.find(word, current_pos)
+                word_count += 1  # Increment before comparison to start counting from 1
+                
+                if start_word_index <= word_count <= end_word_index:
+                    start_idx = f"{start_line}.{current_pos}"
+                    end_idx = f"{start_line}.{current_pos + len(word)}"
+                    text_widget.tag_add('highlight', start_idx, end_idx)
+                    text_widget.tag_configure('highlight', background='yellow')
+                
+                current_pos += len(word)
     except Exception as e:
         print(f"Error in highlight_selection: {str(e)}")
         
