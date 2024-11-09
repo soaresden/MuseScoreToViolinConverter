@@ -8,18 +8,27 @@ import pandas as pd
 import zipfile
 import os
 import json
+import threading
 import subprocess
+import re
+from bs4 import BeautifulSoup
 
 current_file_path = None
 
 # Function to load a MusicXML, MSCX, or MSCZ file
 def load_musicxml():
-    global current_file_path  # Declare the global variable
+    global current_file_path
     file_path = filedialog.askopenfilename(filetypes=[("All MusicXML, MSCX, and MSCZ files", "*.musicxml;*.mscx;*.mscz")])
     if file_path:
-        current_file_path = file_path  # Store the file path
-        if file_path.endswith('.mscz'): #It's like a Zip, opened it and we have a MSCX
-            # Extract the MSCX file from the MSCZ archive
+        current_file_path = file_path
+        
+        # Check for existing HTML file
+        directory = os.path.dirname(file_path)
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        html_path = os.path.join(directory, f"{base_name}_fingering.html")
+        
+        # Process the original file
+        if file_path.endswith('.mscz'):
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 extracted_files = [file for file in zip_ref.namelist() if not file.endswith(('.dat', '.tar'))]
                 mscx_files = [f for f in extracted_files if f.endswith('.mscx')]
@@ -32,21 +41,62 @@ def load_musicxml():
                     else:
                         print("No measures found in the MSCX file.")
         elif file_path.endswith('.mscx'):
-            # Load and parse MSCX file directly
             score = parse_mscx(file_path)
             if score:
                 display_measures(score, is_mscx=True)
             else:
                 print("No measures found in the MSCX file.")
         else:
-            # Load and parse MusicXML file
             score = converter.parse(file_path)
             display_measures(score, is_mscx=False)
+
         file_label.config(text=f"File opened: {os.path.basename(file_path)}")
-        if file_path.endswith('.musicxml') or file_path.endswith('.mscx') or file_path.endswith('.mscz'):
-            convert_to_violin()
+        
+        # Convert notes to violin fingering
+        convert_to_violin()
+        
+        # Load existing HTML file into textbox3 if it exists
+        if os.path.exists(html_path):
+            with open(html_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                
+                # Utiliser BeautifulSoup pour extraire le contenu du corps tout en conservant les balises
+                soup = BeautifulSoup(content, 'html.parser')
+                body_content = soup.find('body')
+                
+                if body_content:
+                    # Effacer le contenu actuel de editable_notes_display
+                    editable_notes_display.delete('1.0', tk.END)
+                    
+                    # Ajouter le contenu avec formatage
+                    for line in body_content.find_all('div', class_='measure'):
+                        for element in line:
+                            if element.name == 'span':
+                                # Récupérer le texte et les classes de style
+                                text = element.get_text()
+                                classes = element.get('class', [])
+                                tag = ' '.join(classes)
+                                
+                                # Insérer le texte avec le tag de style
+                                editable_notes_display.insert(tk.END, text, tag)
+                            else:
+                                # Insérer le texte sans style
+                                editable_notes_display.insert(tk.END, element)
+                        # Ajouter un saut de ligne pour chaque mesure
+                        editable_notes_display.insert(tk.END, '\n')
+        else:
+            # Si le fichier HTML n'existe pas, charger le fichier normalement
+            score = converter.parse(file_path)
+            display_measures(score, is_mscx=False)
+        
+        # Mettre à jour le label avec le nom du fichier ouvert
+        file_label.config(text=f"File opened: {os.path.basename(file_path)}")
+    else:
+        # Copy content from textbox2 to textbox3 with formatting
+        copy_text_with_formatting(converted_notes_display, editable_notes_display)
+        # Save initial HTML file
+        save_as_html(current_file_path)
  
-            
 # Function to parse an MSCX file and extract musical information
 def parse_mscx(file_path):
     try:
@@ -77,55 +127,120 @@ def parse_mscx(file_path):
 
 # Highlight notes in the two Textboxes
 def highlight_selection(event=None):
-    original_notes_display.tag_remove('highlight', '1.0', tk.END)
-    converted_notes_display.tag_remove('highlight', '1.0', tk.END)
-    editable_notes_display.tag_remove('highlight', '1.0', tk.END)
-
     try:
-        selection_start = original_notes_display.index(tk.SEL_FIRST)
-        selection_end = original_notes_display.index(tk.SEL_LAST)
-    except tk.TclError:
-        return
+        widget = root.focus_get()
+        if not isinstance(widget, ScrolledText):
+            return
 
-    # Get measure numbers and note index
-    start_line = int(selection_start.split('.')[0])
-    measure_label = original_notes_display.get(f"{start_line}.0", f"{start_line}.end").split(':')[0]
-    measure_number = int(measure_label[1:])
+        # Remove previous highlights from all textboxes
+        for text_widget in [original_notes_display, converted_notes_display, editable_notes_display]:
+            text_widget.tag_remove('highlight', '1.0', tk.END)
 
-    # Calculate the start and end note in the measure
-    measure_content = original_notes_display.get(f"{start_line}.0", f"{start_line}.end").split(': ')[1]
-    words = measure_content.split(' ')
-    start_idx = len(original_notes_display.get(f"{start_line}.0", selection_start).split()) - 1
-    end_idx = len(original_notes_display.get(f"{start_line}.0", selection_end).split()) - 2
-    if start_idx == end_idx:
-        selection_text = f"{measure_label} [{start_idx+1}]"
-    else:
-        selection_text = f"{measure_label} [{start_idx+1};{end_idx+1}]"
-    selection_label.config(text=f"Selected notes: {selection_text}")
+        try:
+            selection_start = widget.index(tk.SEL_FIRST)
+            selection_end = widget.index(tk.SEL_LAST)
+        except tk.TclError:
+            return
 
-    # Use selection logic based on words
-    word_list = measure_content.split()
-    for i in range(start_idx, end_idx + 1):
-        word_start_idx = len(' '.join(word_list[:i])) + i
-        word_end_idx = word_start_idx + len(word_list[i])
-        word_start = f"{start_line}.0 + {word_start_idx}c"
-        word_end = f"{start_line}.0 + {word_end_idx}c"
-        original_notes_display.tag_add('highlight', word_start, word_end)
-        converted_notes_display.tag_add('highlight', word_start, word_end)
-        editable_notes_display.tag_add('highlight', word_start, word_end)
+        # Get measure number and selected text
+        start_line = int(selection_start.split('.')[0])
+        start_col = int(selection_start.split('.')[1])
+        end_col = int(selection_end.split('.')[1])
+        
+        # Get the full line content
+        line_content = widget.get(f"{start_line}.0", f"{start_line}.end")
+        
+        # Count non-space characters up to the selection
+        non_space_chars_before = len([c for c in line_content[:start_col] if c != ' '])
+        non_space_chars_to_end = len([c for c in line_content[:end_col] if c != ' '])
+        
+        # Format selection display
+        if non_space_chars_before == non_space_chars_to_end - 1:
+            selection_display = f"M{start_line:03d}:[{non_space_chars_before}]"
+        else:
+            selection_display = f"M{start_line:03d}:[{non_space_chars_before}:{non_space_chars_to_end-1}]"
+        
+        # Pour chaque textbox
+        for text_widget in [original_notes_display, converted_notes_display, editable_notes_display]:
+            text_widget.tag_add('highlight', selection_start, selection_end)
+            text_widget.tag_configure('highlight', background='yellow')
 
-    original_notes_display.tag_configure('highlight', background='yellow')
-    converted_notes_display.tag_configure('highlight', background='yellow')
-    editable_notes_display.tag_configure('highlight', background='yellow')
+        # Update selection label
+        selection_label.config(text=selection_display)
 
-    
+    except Exception as e:
+        print(f"Error in highlight_selection: {str(e)}")
+        
 # Function to open the score in MuseScore
-def open_in_musescore():
-    file_path = file_label.cget("text").replace("File opened: ", "")
-    if file_path and os.path.exists(file_path):
-        musescore_path = r"C:\\Program Files\\MuseScore 4\\bin\\MuseScore4.exe"
-        subprocess.Popen([musescore_path, file_path])
+def copy_with_format():
+    try:
+        widget = root.focus_get()
+        if not isinstance(widget, ScrolledText):
+            return
+            
+        selection = widget.get(tk.SEL_FIRST, tk.SEL_LAST)
+        tags = widget.tag_names(tk.SEL_FIRST)
+        
+        root.clipboard_clear()
+        root.clipboard_append(selection)  # Simplifié pour ne copier que le texte
+    except tk.TclError:
+        pass
 
+def paste_with_format():
+    try:
+        widget = root.focus_get()
+        if not isinstance(widget, ScrolledText):
+            return
+            
+        clipboard_data = root.clipboard_get()
+        widget.insert(tk.INSERT, clipboard_data)  # Colle directement le texte
+    except tk.TclError:
+        pass
+    
+def check_musescore_path():
+    musescore_paths = [
+        r"C:\Program Files\MuseScore 4\bin\MuseScore4.exe",
+        r"C:\Program Files\MuseScore 3\bin\MuseScore3.exe",
+        r"C:\Program Files (x86)\MuseScore 4\bin\MuseScore4.exe",
+        r"C:\Program Files (x86)\MuseScore 3\bin\MuseScore3.exe"
+    ]
+    
+    for path in musescore_paths:
+        if os.path.exists(path):
+            return True
+    return False
+
+def open_in_musescore():
+    global current_file_path
+    if current_file_path and os.path.exists(current_file_path):
+        try:
+            root.config(cursor="wait")  # Change le curseur en sablier
+            musescore_button.config(state='disabled')  # Désactive le bouton pendant le chargement
+            
+            # Met à jour l'interface
+            root.update()
+            
+            # Recherche du chemin MuseScore
+            musescore_paths = [
+                r"C:\Program Files\MuseScore 4\bin\MuseScore4.exe",
+                r"C:\Program Files\MuseScore 3\bin\MuseScore3.exe",
+                r"C:\Program Files (x86)\MuseScore 4\bin\MuseScore4.exe",
+                r"C:\Program Files (x86)\MuseScore 3\bin\MuseScore3.exe"
+            ]
+            
+            for path in musescore_paths:
+                if os.path.exists(path):
+                    subprocess.Popen([path, current_file_path])
+                    break
+                    
+        except Exception as e:
+            print(f"Error opening MuseScore: {str(e)}")
+        finally:
+            root.config(cursor="")  # Remet le curseur normal
+            musescore_button.config(state='normal')  # Réactive le bouton
+    else:
+        print("No file currently opened")
+        
 # Create Dictionnaries for Strings
 def get_g_string_fingering():
     return [
@@ -412,55 +527,15 @@ def convert_to_violin():
             editable_notes_display.insert(tk.END, "\n")
 
 # Save modifications when the content of editable_notes_display changes
+# Modifiez la fonction `on_edit` pour détecter l'événement "Entrée"
 def on_edit(event):
-    global current_file_path  # Access to Global Variable
-    try:
-        if current_file_path:  # Verify opened file
-            directory = os.path.dirname(current_file_path)
-            base_name = os.path.splitext(os.path.basename(current_file_path))[0]
-            html_path = os.path.join(directory, f"{base_name}_fingering.html")
-            
-            content = editable_notes_display.get("1.0", tk.END)
-            
-            html_content = """
-            <html>
-            <head>
-                <style>
-                    .green { color: green; }
-                    .red { color: red; }
-                    .blue { color: blue; }
-                    .brown { color: brown; }
-                    .measure { margin: 5px 0; }
-                    body { font-family: monospace; }
-                </style>
-            </head>
-            <body>
-            """
-            
-            for line in content.split('\n'):
-                if line.strip():
-                    html_content += "<div class='measure'>"
-                    pos = "1.0"
-                    for char in line:
-                        tags = editable_notes_display.tag_names(pos)
-                        color_tag = next((tag for tag in tags if "color_" in tag), None)
-                        
-                        if color_tag:
-                            color = editable_notes_display.tag_cget(color_tag, "foreground")
-                            color_class = color.replace("#", "")
-                            html_content += f"<span class='{color_class}'>{char}</span>"
-                        else:
-                            html_content += char
-                            
-                        pos = editable_notes_display.index(f"{pos}+1c")
-                    html_content += "</div>"
-            
-            html_content += "</body></html>"
-            
-            with open(html_path, 'w', encoding='utf-8') as f:
-                f.write(html_content)
-    except Exception as e:
-        print(f"Save Error : {str(e)}")
+    global current_file_path
+    if event.keysym == 'Return':  # Vérifie si la touche pressée est "Entrée"
+        if current_file_path:
+            save_as_html(current_file_path)  # Sauvegarde du fichier HTML
+            file_label.config(text=f"Last saved: {os.path.basename(current_file_path)}")
+        editable_notes_display.edit_modified(False)
+
 
 # Function to convert MIDI number to note name
 def midi_to_note_name(midi_number):
@@ -480,71 +555,123 @@ def change_color(color):
         tag_name = f'color_{selection_start}_{selection_end}'
         editable_notes_display.tag_add(tag_name, selection_start, selection_end)
         editable_notes_display.tag_configure(tag_name, foreground=color)
-
         
 # Replace save_modifications function with save_as_html
 def save_as_html(file_path):
-    try:
-        if not file_path:
-            return
+    if not file_path:
+        return
 
-        # Get directory of the original file
-        directory = os.path.dirname(file_path)
-        base_name = os.path.splitext(os.path.basename(file_path))[0]
-        html_path = os.path.join(directory, base_name + "_fingering.html")
+    # Définir le chemin du fichier HTML
+    directory = os.path.dirname(file_path)
+    base_name = os.path.splitext(os.path.basename(file_path))[0]
+    html_path = os.path.join(directory, f"{base_name}_fingering.html")
 
-        content = editable_notes_display.get("1.0", tk.END)
+    # Préparer le contenu HTML avec les styles
+    html_content = ['<!DOCTYPE html>', '<html>', '<head>', '<style>']
+    html_content.append('''
+        body { white-space: pre-wrap; font-family: monospace; }
+    ''')
 
-        # Start of HTML document with CSS style
-        html_content = """
-        <html>
-        <head>
-            <style>
-                .green { color: green; }
-                .red { color: red; }
-                .blue { color: blue; }
-                .brown { color: brown; }
-                .measure { margin: 5px 0; }
-                body { font-family: monospace; }
-            </style>
-        </head>
-        <body>
-        """
+    # Récupérer les styles de chaque tag utilisé dans editable_notes_display
+    tags_used = {}
+    for tag in editable_notes_display.tag_names():
+        if tag not in ('sel', 'highlight'):
+            config = editable_notes_display.tag_configure(tag)
+            style = ""
+            if 'foreground' in config:
+                style += f"color: {config['foreground'][4]};"
+            if 'background' in config:
+                style += f" background-color: {config['background'][4]};"
+            tags_used[tag] = style
 
-        # Convert content to HTML while preserving formatting
-        for line in content.split('\n'):
-            if line.strip():
-                html_content += "<div class='measure'>"
-                pos = "1.0"
-                for char in line:
-                    # Check tags at this position
-                    tags = editable_notes_display.tag_names(pos)
-                    color_tag = next((tag for tag in tags if "color_" in tag), None)
+    # Ajouter les styles des tags dans le HTML
+    for tag, style in tags_used.items():
+        html_content.append(f'.{tag} {{ {style} }}')
+    html_content.extend(['</style>', '</head>', '<body>'])
 
-                    if color_tag:
-                        color = editable_notes_display.tag_cget(color_tag, "foreground")
-                        color_class = color.replace("#", "")
-                        html_content += f"<span class='{color_class}'>{char}</span>"
-                    else:
-                        html_content += char
+    # Traitement ligne par ligne du contenu de editable_notes_display
+    total_lines = int(editable_notes_display.index("end-1c").split(".")[0])
+    for line_num in range(1, total_lines + 1):
+        line_start = f"{line_num}.0"
+        line_end = f"{line_num}.end"
+        line_text = editable_notes_display.get(line_start, line_end)
 
-                    # Increment position
-                    pos = editable_notes_display.index(f"{pos}+1c")
+        # Démarrer une nouvelle ligne avec un div pour chaque mesure
+        html_content.append('<div class="measure">')
+        for pos in range(len(line_text)):
+            current_pos = f"{line_num}.{pos}"
+            char = editable_notes_display.get(current_pos)
+            tags = editable_notes_display.tag_names(current_pos)
+            tag_classes = ' '.join(tags)
 
-                html_content += "</div>"
+            # Encapsuler chaque caractère dans un span avec les classes de tag
+            if tag_classes:
+                html_content.append(f'<span class="{tag_classes}">{char}</span>')
+            else:
+                html_content.append(char)  # Si pas de tag, ajouter le caractère brut
 
-        html_content += "</body></html>"
+        # Fermer le div de la mesure avec un saut de ligne visuel
+        html_content.append('</div>')
 
-        with open(html_path, 'w', encoding='utf-8') as f:
-            f.write(html_content)
+    html_content.extend(['</body>', '</html>'])
 
-        # Update status bar or label instead of popup
-        file_label.config(text=f"Last saved: {os.path.basename(html_path)}")
+    # Écrire le contenu HTML dans le fichier
+    with open(html_path, 'w', encoding='utf-8') as f:
+        f.write(''.join(html_content))  # Écrire sans ajouter de sauts de ligne
 
-    except Exception as e:
-        # Log the error or update status instead of showing popup
-        file_label.config(text=f"Save error: {str(e)}")
-        print(f"Save error: {str(e)}")
+    # Mise à jour de l'interface pour indiquer la sauvegarde
+    file_label.config(text=f"Last saved: {os.path.basename(html_path)}")
+
+
+
+
+
+
+def refresh_text_display():
+    """Refresh the editable_notes_display content to reapply styles and ensure format consistency."""
+    content = editable_notes_display.get("1.0", tk.END)
+    editable_notes_display.delete("1.0", tk.END)
+    editable_notes_display.insert("1.0", content)
+
+    # Reapply all tags to ensure they display correctly after reloading
+    for line_num in range(1, int(editable_notes_display.index("end-1c").split(".")[0]) + 1):
+        line_start = f"{line_num}.0"
+        line_end = f"{line_num}.end"
+        line_text = editable_notes_display.get(line_start, line_end)
+        for pos in range(len(line_text)):
+            current_pos = f"{line_num}.{pos}"
+            tags = editable_notes_display.tag_names(current_pos)
+            for tag in tags:
+                editable_notes_display.tag_add(tag, current_pos, f"{current_pos}+1c")
+
+    
+
+
+
+# Function to copy text with formatting from one textbox to another
+def copy_text_with_formatting(source_widget, target_widget):
+    target_widget.delete('1.0', tk.END)
+    content = source_widget.get('1.0', tk.END)
+    
+    # Copy content and tags position by position
+    for i in range(0, len(content)):
+        pos = f"1.{i}"
+        try:
+            char = source_widget.get(pos)
+            tags = source_widget.tag_names(pos)
+            if tags:
+                # Filter out selection tags
+                tags = [tag for tag in tags if not tag in ('sel', 'highlight')]
+                target_widget.insert(tk.END, char, tags)
+                # Configure the same tag properties in the target widget
+                for tag in tags:
+                    tag_config = source_widget.tag_configure(tag)
+                    target_widget.tag_configure(tag, **tag_config)
+            else:
+                target_widget.insert(tk.END, char)
+        except tk.TclError:
+            break
+
 
 # Creating DataFrames
 fingering_df_g_string = pd.DataFrame(get_g_string_fingering(), columns=['Fingers Used', 'Note', 'String'])
@@ -558,6 +685,8 @@ fingering_df_e_string = pd.DataFrame(get_e_string_fingering(), columns=['Fingers
 root = tk.Tk()
 root.title("MusicXML Note & Fingering Display")
 root.geometry("1200x600")  # Set window size
+root.bind('<Control-c>', lambda e: copy_with_format())
+root.bind('<Control-v>', lambda e: paste_with_format())
 
 # Button to open a MusicXML, MSCX, or MSCZ file
 open_button = tk.Button(root, text="Open a MusicXML/MSCX/MSCZ File", command=load_musicxml)
@@ -597,21 +726,26 @@ for i, color in enumerate(legend_colors, start=1):
 
 # Open in MuseScore
 musescore_button = tk.Button(root, text="Open in MuseScore", command=open_in_musescore)
-musescore_button.place(x=1010, y=50)
+if check_musescore_path():
+    musescore_button.place(x=1010, y=50)
 
 # ScrolledText for original notes display
 original_notes_display = ScrolledText(root, width=50, height=10)
 original_notes_display.pack(pady=10, side=tk.LEFT, fill=tk.BOTH, expand=True)
 original_notes_display.insert(tk.END, "Original Notes:\n")
+original_notes_display.bind('<<Selection>>', highlight_selection)
 
 # ScrolledText for converted notes display
 converted_notes_display = ScrolledText(root, width=50, height=10)
 converted_notes_display.pack(pady=10, side=tk.LEFT, fill=tk.BOTH, expand=True)
 converted_notes_display.insert(tk.END, "Converted Violin Notes:\n")
+converted_notes_display.bind('<<Selection>>', highlight_selection)
 
 # ScrolledText for editable notes display
 editable_notes_display = ScrolledText(root, width=50, height=10)
 editable_notes_display.pack(pady=10, side=tk.RIGHT, fill=tk.BOTH, expand=True)
 editable_notes_display.insert(tk.END, "Editable Notes:\n")
+editable_notes_display.bind('<<Selection>>', highlight_selection)
+editable_notes_display.bind('<Return>', on_edit)
 
 root.mainloop()
