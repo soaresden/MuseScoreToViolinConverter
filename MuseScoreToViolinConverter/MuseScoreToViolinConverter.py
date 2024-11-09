@@ -2,7 +2,7 @@
 from functools import lru_cache
 from music21 import converter, note, stream
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 import pandas as pd
 import zipfile
@@ -12,6 +12,8 @@ import threading
 import subprocess
 import re
 from bs4 import BeautifulSoup
+import pyperclip
+
 
 current_file_path = None
 
@@ -560,7 +562,6 @@ def change_color(color):
 def save_as_html(file_path):
     if not file_path:
         return
-
     # Définir le chemin du fichier HTML
     directory = os.path.dirname(file_path)
     base_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -570,6 +571,7 @@ def save_as_html(file_path):
     html_content = ['<!DOCTYPE html>', '<html>', '<head>', '<style>']
     html_content.append('''
         body { white-space: pre-wrap; font-family: monospace; }
+        .default { color: black; }  /* Style par défaut */
     ''')
 
     # Récupérer les styles de chaque tag utilisé dans editable_notes_display
@@ -602,13 +604,18 @@ def save_as_html(file_path):
             current_pos = f"{line_num}.{pos}"
             char = editable_notes_display.get(current_pos)
             tags = editable_notes_display.tag_names(current_pos)
+            
+            # Vérification et ajout des tags manquants
+            if not tags:
+                tags = ['default']  # Utiliser un tag 'default' pour les caractères non stylés
+
             tag_classes = ' '.join(tags)
 
             # Encapsuler chaque caractère dans un span avec les classes de tag
             if tag_classes:
                 html_content.append(f'<span class="{tag_classes}">{char}</span>')
             else:
-                html_content.append(char)  # Si pas de tag, ajouter le caractère brut
+                html_content.append(char)  # Ajouter le caractère directement si pas de tag
 
         # Fermer le div de la mesure avec un saut de ligne visuel
         html_content.append('</div>')
@@ -621,7 +628,6 @@ def save_as_html(file_path):
 
     # Mise à jour de l'interface pour indiquer la sauvegarde
     file_label.config(text=f"Last saved: {os.path.basename(html_path)}")
-
 
 
 
@@ -649,28 +655,45 @@ def refresh_text_display():
 
 
 # Function to copy text with formatting from one textbox to another
-def copy_text_with_formatting(source_widget, target_widget):
-    target_widget.delete('1.0', tk.END)
-    content = source_widget.get('1.0', tk.END)
-    
-    # Copy content and tags position by position
-    for i in range(0, len(content)):
-        pos = f"1.{i}"
-        try:
-            char = source_widget.get(pos)
-            tags = source_widget.tag_names(pos)
+def copy_with_format():
+    try:
+        # Récupérer la sélection dans editable_notes_display
+        selection_start = editable_notes_display.index(tk.SEL_FIRST)
+        selection_end = editable_notes_display.index(tk.SEL_LAST)
+        selected_text = editable_notes_display.get(selection_start, selection_end)
+        
+        # Construire le HTML du texte sélectionné
+        html_content = ['<!DOCTYPE html>', '<html>', '<body>', '<pre>']  # Utilise <pre> pour conserver les espaces
+        
+        current_index = selection_start
+        while current_index != selection_end:
+            # Récupérer le caractère et ses tags
+            char = editable_notes_display.get(current_index)
+            tags = editable_notes_display.tag_names(current_index)
+            
+            # Construire un span avec les styles
             if tags:
-                # Filter out selection tags
-                tags = [tag for tag in tags if not tag in ('sel', 'highlight')]
-                target_widget.insert(tk.END, char, tags)
-                # Configure the same tag properties in the target widget
-                for tag in tags:
-                    tag_config = source_widget.tag_configure(tag)
-                    target_widget.tag_configure(tag, **tag_config)
+                tag_classes = ' '.join(tags)
+                html_content.append(f'<span class="{tag_classes}">{char}</span>')
             else:
-                target_widget.insert(tk.END, char)
-        except tk.TclError:
-            break
+                html_content.append(char)
+                
+            # Passer au caractère suivant
+            current_index = editable_notes_display.index(f"{current_index}+1c")
+        
+        html_content.extend(['</pre>', '</body>', '</html>'])
+        
+        # Convertir en une seule chaîne de HTML
+        html_to_copy = ''.join(html_content)
+
+        # Copier le texte brut et le HTML dans le presse-papiers
+        pyperclip.copy(selected_text)  # Copie le texte brut
+        pyperclip.copy(html_to_copy)  # Copie le HTML formaté
+
+        messagebox.showinfo("Copie", "Texte copié avec formatage HTML dans le presse-papiers!")
+    except tk.TclError:
+        messagebox.showwarning("Erreur", "Aucune sélection n'a été faite.")
+
 
 
 # Creating DataFrames
@@ -747,5 +770,7 @@ editable_notes_display.pack(pady=10, side=tk.RIGHT, fill=tk.BOTH, expand=True)
 editable_notes_display.insert(tk.END, "Editable Notes:\n")
 editable_notes_display.bind('<<Selection>>', highlight_selection)
 editable_notes_display.bind('<Return>', on_edit)
+root.bind('<Control-c>', lambda e: copy_with_format())
+
 
 root.mainloop()
